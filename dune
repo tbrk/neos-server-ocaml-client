@@ -3,5 +3,6 @@
    (name neosclient)
    (libraries rpclib cohttp-lwt-unix)
    (promote (until-clean))
+   (preprocess (pps ppx_deriving.show ppx_deriving_rpc))
 )
 
