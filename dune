@@ -1,7 +1,7 @@
 
 (executable
    (name neosclient)
-   (libraries rpclib cohttp-lwt-unix)
+   (libraries rpclib cohttp-lwt-unix base64.rfc2045)
    (promote (until-clean))
    (preprocess (pps ppx_deriving.show ppx_deriving_rpc))
 )
