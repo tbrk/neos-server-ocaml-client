@@ -195,6 +195,21 @@ end
 
 let server_url = ref "https://neos-server.org:3333"
 
+let base64_2045_decode s =
+  let open Base64_rfc2045 in
+  let buf = Buffer.create 1024 in
+  let d = decoder (`String s) in
+  let rec go () =
+    match decode d with
+    | `Flush s -> (Buffer.add_string buf s; go ())
+    | `End -> Buffer.contents buf
+    (* best-effort *)
+    | `Malformed _   (* ignore; usually missing '\r' before '\n' *)
+    | `Wrong_padding (* ignore *)
+    | `Await -> go ()
+  in
+  go ()
+
 (* Send request over https and decode the resonse. *)
 let rpc ~debug c =
   if debug then Printf.eprintf "sending:\n%s\n" (Xmlrpc.string_of_call c);
@@ -215,7 +230,7 @@ let rpc ~debug c =
           (resp |> Cohttp.Response.headers |> Cohttp.Header.to_string);
     body |> Cohttp_lwt.Body.to_string >|= fun body ->
       if debug then Printf.eprintf "received:\n%s\n" body;
-      Xmlrpc.response_of_string body
+      Xmlrpc.response_of_string ~base64_decode:base64_2045_decode body
   in
   Lwt_main.run call_server
 
