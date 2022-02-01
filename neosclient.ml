@@ -230,7 +230,7 @@ let rpc ~debug c =
           (resp |> Cohttp.Response.headers |> Cohttp.Header.to_string);
     body |> Cohttp_lwt.Body.to_string >|= fun body ->
       if debug then Printf.eprintf "received:\n%s\n" body;
-      Xmlrpc.response_of_string ~base64_decode:base64_2045_decode body
+      Xmlrpc.response_of_string ~base64_decoder:base64_2045_decode body
   in
   Lwt_main.run call_server
 
