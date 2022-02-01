@@ -36,3 +36,13 @@ make && ./neosclient.exe --email <your-email-address> test.lp
 Please provide your real email address out of respect for the maintainers of 
 the NEOS servers.
 
+Other examples:
+```
+./neosclient.exe --queue
+./neosclient.exe --email <your-email-address> problem.lp --poll
+./neosclient.exe --email me@ --ping problem.lp
+./neosclient.exe --job <jobnum> --password <password> --status
+./neosclient.exe --job <jobnum> --password <password> --info
+./neosclient.exe --job <jobnum> --password <password> --kill
+```
+

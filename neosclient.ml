@@ -60,7 +60,7 @@ module NeosInterface(R : Idl.RPC) = struct
     (noargs (returning string_p Idl.DefaultError.err))
 
   let welcome = declare "welcome"
-    ["Returns a welcome mesage"]
+    ["Returns a welcome message"]
     (noargs (returning string_p Idl.DefaultError.err))
 
   let version = declare "version"
@@ -326,7 +326,7 @@ let lp_job ~category ~solver ~email ~lp ?short_priority
 
 (* Unzip returned data using forked [funzip] *)
 
-let send_string s fd =
+let send_string fd s =
   let rec go remaining offset =
     if remaining > 0 then
       try
@@ -366,7 +366,7 @@ let unzip sz =
       (* write the compressed string to the funzip process *)
       Unix.close from_funzip;
       Fun.protect ~finally:(fun () -> Unix.close to_funzip)
-                  (fun () -> send_string sz to_funzip);
+                  (fun () -> send_string to_funzip sz);
       exit 0
   | child ->
       (* read the uncompressed string from the funzip process *)
@@ -378,65 +378,149 @@ let unzip sz =
       in
       Fun.protect ~finally:cleanup (fun () -> recv_string from_funzip)
 
+(* Utilities *)
+
+let datetime Unix.{ tm_year; tm_mon; tm_mday; tm_hour; tm_min; _ } =
+  Format.sprintf "%04d-%02d-%02d_%02d%02d"
+    (tm_year + 1900) (tm_mon + 1) tm_mday tm_hour tm_min
+
 (* Using the interface *)
 
 let email = ref ""
-let category = ref "lp"
+let jobname = ref (datetime Unix.(localtime (time ())))
 let solver = ref "CPLEX"
-let comments = ref None
-let lp_file = ref ""
 
-let args = Arg.[
-  ("--email", Set_string email,
-   "A valid email address is required to submit a job");
+let job = ref 0
+let password = ref ""
 
-  ("--server", Set_string server_url,
-   "The URL of the NEOS server");
+let show_waiting = ref true
+let poll_interval = ref 60
 
-  ("--category", Set_string category,
-   "The category of the request. Defaults to 'lp'");
+let check_job () =
+  if !job = 0 || !password = "" then
+    (Format.eprintf "Must specify --job and --password@."; exit 1)
 
-  ("--solver", Set_string solver,
-   "The solver to use. Defaults to 'CPLEX'");
+let show_queue () = Format.printf "%s@?" (Call.print_queue ())
+let send_ping () = Format.printf "%s@?" (Call.ping ())
+let do_sleep d = Unix.sleep d
 
-  ("--comments", String (fun s -> comments := Some s),
-   "Optional comments to send with the job.");
+let kill_job () =
+  check_job ();
+  Format.printf "%s@." (Call.kill_job !job !password "")
 
-  ("--lp", Set_string lp_file,
-   "Path to the lp file to solve.");
-]
+let job_status () =
+  check_job ();
+  Format.printf "job status: %s@." (Call.get_job_status !job !password)
+
+let job_info () =
+  check_job ();
+  let r = Call.get_job_info !job !password in
+  Format.printf
+    "job info: category=%s solver_name=%s input=%s status=%s@."
+    r.(0) r.(1) r.(2) r.(3)
 
 let slurp path =
   let fd = Unix.(openfile path [ O_RDONLY ] 0o640) in
   Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> recv_string fd)
 
-let poll_final_results jobnum passwd =
-  let rec go () =
-    Format.printf "checking@.";
-    let s = Call.get_final_results_non_blocking jobnum passwd in
-    if s = "" then (Format.printf "sleeping...@."; Unix.sleep 5; go ())
-    else s
-  in go ()
+let dump path s =
+  let fd = Unix.(openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o666) in
+  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> send_string fd s)
 
-let main () =
-  Arg.parse args (fun s -> lp_file := s) "neosclient.exe";
+let handle_lp_file path =
   if !email = ""
-    then (Format.eprintf "An email address must be specified.@."; exit 1);
-  if !lp_file = ""
-    then (Format.eprintf "An lp file must be specified.@."; exit 2);
-  Format.printf "%s@." (Call.ping ());
-  let lp = slurp !lp_file in
-  let job = lp_job ~category:!category ~solver:!solver ~email:!email ~lp
-                   ~wantsol:true ?comments:!comments ()
+    then (Format.eprintf "Sending an lp file requires an email address.@.";
+          exit 1);
+  let j, pw = Call.submit_job
+                (lp_job ~category:"lp" ~solver:!solver ~email:!email
+                        ~lp:(slurp path) ~wantsol:true ())
   in
-  let jobnum, passwd = Call.submit_job job in
-  Format.printf "job= %d passwd= %s@." jobnum passwd;
-  Unix.sleep 2;
-  Format.printf "%s@." (Call.print_queue ());
-  let log = poll_final_results jobnum passwd in
-  Format.printf "%s@." log;
-  let sz = Call.get_output_file jobnum passwd "solver-output.zip" in
-  Format.printf "--------soln.sol:@.%s@." (unzip sz)
+  job := j;
+  password := pw;
+  Format.printf "%s --job %d --password %s --queue@."
+    Sys.argv.(0) !job !password
 
-let _ = main ()
+let handle_file path =
+  if Filename.extension path = ".lp" then handle_lp_file path
+  else (Format.eprintf "unknown file type: %s@." (Filename.basename path); exit 1)
+let re_has_solution = Str.regexp "solution written to file 'soln.sol'"
+
+let poll_results () =
+  let add_newline = ref false in
+  let rec go () =
+    let log = Call.get_final_results_non_blocking !job !password in
+    if log <> "" then begin
+      if !add_newline then Format.print_newline ();
+      let logpath = !jobname ^ ".log" in
+      dump logpath log;
+      Format.printf "log written to: %s@." logpath;
+      match Str.search_forward re_has_solution log 0 with
+      | _ ->
+          let solpath = !jobname ^ ".xml" in
+          let solz = Call.get_output_file !job !password "solver-output.zip" in
+          dump solpath (unzip solz);
+          Format.printf "solution written to: %s@." solpath;
+          exit 0
+      | exception Not_found ->
+          Format.printf "no solution found@.";
+          exit (-1)
+    end
+    else begin
+      if !show_waiting then (Format.printf ".@?"; add_newline := true);
+      Unix.sleep !poll_interval;
+      go ()
+    end
+  in
+  check_job ();
+  go ()
+
+let args = Arg.(align [
+  ("--email", Set_string email,
+   "<string> A valid email address is required to submit a job");
+
+  ("--jobname", Set_string jobname,
+   "<string> Used to name log and solution files.");
+
+  ("--server", Set_string server_url,
+   "<url> The URL of the NEOS server (" ^ !server_url ^ ")");
+
+  ("--solver", Set_string solver,
+   "<string> The solver to use (" ^ !solver ^ ")");
+
+  ("--job", Set_int job, "<int> The current job number");
+  ("--password", Set_string password, "<string> The current password");
+
+  ("--sleep", Int do_sleep, "<int> Sleep for a given number of seconds");
+  ("--queue", Unit show_queue, " Show the server queue");
+  ("--ping", Unit send_ping, " Ping the server");
+
+  ("--kill", Unit kill_job, " Kill a job");
+  ("--status", Unit job_status, " Get job status");
+  ("--info", Unit job_info, " Get information on a job");
+
+  ("--poll", Unit poll_results,
+   " Wait for the job to complete and download the results.");
+  ("--poll-interval", Set_int poll_interval,
+   "<int> Set the interval in seconds for polling.");
+  ("--quiet", Clear show_waiting, " Do not show '.'s while polling.");
+])
+
+let usage_msg =
+  (Filename.basename Sys.argv.(0)) ^
+    ": submit and manage jobs on the NEOS Server"
+
+let _ = Arg.parse args handle_file usage_msg
+
+(* example 1
+    ./runneos --email me@ problem.lp --poll
+
+   example 2
+    ./runneos --queue
+
+   example 3
+    ./runneos --email me@ --ping problem.lp
+    ./runneos --job <jobnum> --password <password> --status
+    ./runneos --job <jobnum> --password <password> --info
+    ./runneos --job <jobnum> --password <password> --kill
+ *)
 
