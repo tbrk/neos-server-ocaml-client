@@ -390,6 +390,8 @@ let email = ref ""
 let jobname = ref (datetime Unix.(localtime (time ())))
 let solver = ref "CPLEX"
 
+let lp_options = ref (None : string option)
+
 let job = ref 0
 let password = ref ""
 
@@ -433,7 +435,7 @@ let handle_lp_file path =
           exit 1);
   let j, pw = Call.submit_job
                 (lp_job ~category:"lp" ~solver:!solver ~email:!email
-                        ~lp:(slurp path) ~wantsol:true ())
+                        ~lp:(slurp path) ?options:!lp_options ~wantsol:true ())
   in
   job := j;
   password := pw;
@@ -489,6 +491,9 @@ let args = Arg.(align [
 
   ("--job", Set_int job, "<int> The current job number");
   ("--password", Set_string password, "<string> The current password");
+
+  ("--lp-options", String (fun s -> lp_options := Some s),
+   "Options to set before running the jobs");
 
   ("--sleep", Int do_sleep, "<int> Sleep for a given number of seconds");
   ("--queue", Unit show_queue, " Show the server queue");
