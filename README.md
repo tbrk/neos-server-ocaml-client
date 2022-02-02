@@ -15,7 +15,7 @@ Dependencies
 ------------
 
 ```
-opam install base64.rfc2045 cohttp-lwt-unix ppx_deriving.show ppx_deriving_rpc rpclib
+opam install base64.rfc2045 lwt_ssl cohttp-lwt-unix ppx_deriving.show ppx_deriving_rpc rpclib
 ```
 
 Requires [funzip](https://linux.die.net/man/1/funzip). If you know how to 
