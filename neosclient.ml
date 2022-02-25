@@ -326,57 +326,10 @@ let lp_job ~category ~solver ~email ~lp ?short_priority
 
 (* Unzip returned data using forked [funzip] *)
 
-let send_string fd s =
-  let rec go remaining offset =
-    if remaining > 0 then
-      try
-        let written = Unix.write_substring fd s offset remaining in
-        go (remaining - written) (offset + written)
-      with Unix.(Unix_error (EINTR, _, _)) -> go remaining offset
-    else ()
-  in
-  go (String.length s) 0
-
-let recv_string fd =
-  let buffer = Buffer.create 1024 in
-  let b = Bytes.create 1024 in
-  let rec go () =
-    try
-      let n = Unix.read fd b 0 1024 in
-      if n = 0 then Buffer.contents buffer
-      else (Buffer.add_subbytes buffer b 0 n; go ())
-      with Unix.(Unix_error (EINTR, _, _)) -> go ()
-  in
-  go ()
-
-let rec wait pid =
-  try ignore (Unix.waitpid [] pid);
-  with Unix.(Unix_error (EINTR, _, _)) -> wait pid
-
-let unzip sz =
-  let from_string, to_funzip = Unix.pipe ~cloexec:false () in
-  let from_funzip, to_string = Unix.pipe ~cloexec:false () in
-  let funzip = Unix.create_process "funzip" [| "funzip" |]
-               from_string to_string Unix.stderr
-  in
-  Unix.close from_string;
-  Unix.close to_string;
-  match Unix.fork () with
-  | 0 ->
-      (* write the compressed string to the funzip process *)
-      Unix.close from_funzip;
-      Fun.protect ~finally:(fun () -> Unix.close to_funzip)
-                  (fun () -> send_string to_funzip sz);
-      exit 0
-  | child ->
-      (* read the uncompressed string from the funzip process *)
-      Unix.close to_funzip;
-      let cleanup () =
-        Unix.close from_funzip;
-        wait funzip;
-        wait child
-      in
-      Fun.protect ~finally:cleanup (fun () -> recv_string from_funzip)
+let funzip ~ipath ~opath =
+  let f = Zip.open_in ipath in
+  Zip.(copy_entry_to_file f (List.hd (entries f)) opath);
+  Zip.close_in f
 
 (* Utilities *)
 
@@ -421,9 +374,32 @@ let job_info () =
     "job info: category=%s solver_name=%s input=%s status=%s@."
     r.(0) r.(1) r.(2) r.(3)
 
+let recv_string fd =
+  let buffer = Buffer.create 1024 in
+  let b = Bytes.create 1024 in
+  let rec go () =
+    try
+      let n = Unix.read fd b 0 1024 in
+      if n = 0 then Buffer.contents buffer
+      else (Buffer.add_subbytes buffer b 0 n; go ())
+      with Unix.(Unix_error (EINTR, _, _)) -> go ()
+  in
+  go ()
+
 let slurp path =
   let fd = Unix.(openfile path [ O_RDONLY ] 0o640) in
   Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> recv_string fd)
+
+let send_string fd s =
+  let rec go remaining offset =
+    if remaining > 0 then
+      try
+        let written = Unix.write_substring fd s offset remaining in
+        go (remaining - written) (offset + written)
+      with Unix.(Unix_error (EINTR, _, _)) -> go remaining offset
+    else ()
+  in
+  go (String.length s) 0
 
 let dump path s =
   let fd = Unix.(openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o666) in
@@ -439,7 +415,7 @@ let handle_lp_file path =
   in
   job := j;
   password := pw;
-  Format.printf "%s --job %d --password %s --queue@."
+  Format.printf "%s --job %d --password %s --status@."
     Sys.argv.(0) !job !password
 
 let handle_file path =
@@ -458,9 +434,12 @@ let poll_results () =
       Format.printf "log written to: %s@." logpath;
       match Str.search_forward re_has_solution log 0 with
       | _ ->
+          let zippath = !jobname ^ ".zip" in
           let solpath = !jobname ^ ".xml" in
           let solz = Call.get_output_file !job !password "solver-output.zip" in
-          dump solpath (unzip solz);
+          dump zippath solz;
+          funzip ~ipath:zippath ~opath:solpath;
+          Unix.unlink zippath;
           Format.printf "solution written to: %s@." solpath;
           exit 0
       | exception Not_found ->

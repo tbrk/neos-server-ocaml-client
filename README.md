@@ -15,14 +15,8 @@ Dependencies
 ------------
 
 ```
-opam install base64.rfc2045 lwt_ssl cohttp-lwt-unix ppx_deriving.show ppx_deriving_rpc rpclib
+opam install base64.rfc2045 lwt_ssl cohttp-lwt-unix ppx_deriving.show ppx_deriving_rpc rpclib camlzip
 ```
-
-Requires [funzip](https://linux.die.net/man/1/funzip). If you know how to 
-use either [camlzip](https://github.com/xavierleroy/camlzip) or 
-[decompress](https://github.com/mirage/decompress) libraries to unzip the 
-only file in a `.zip` archive into a string, please [let me 
-know](mailto:tim@tbrk.org)!
 
 Use
 ---
