@@ -15,7 +15,7 @@ Dependencies
 ------------
 
 ```
-opam install base64.rfc2045 lwt_ssl cohttp-lwt-unix ppx_deriving.show ppx_deriving_rpc rpclib camlzip
+opam install base64 lwt_ssl cohttp-lwt-unix ppx_deriving ppx_deriving_rpc rpclib camlzip
 ```
 
 Use
